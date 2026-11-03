@@ -131,7 +131,7 @@ final class OwnershipController {
     }
 
     func manualClaim() {
-        guard !isSleeping, keyboard.bluetoothAvailability == .poweredOn else { return }
+        guard !isSleeping, !keyboard.isConnectedByCable, keyboard.bluetoothAvailability == .poweredOn else { return }
         manualTarget = .connected
         resetAutomaticAttempts()
         updateIntent()
@@ -140,7 +140,7 @@ final class OwnershipController {
     }
 
     func manualRelease() {
-        guard keyboard.bluetoothAvailability == .poweredOn else { return }
+        guard !keyboard.isConnectedByCable, keyboard.bluetoothAvailability == .poweredOn else { return }
         manualTarget = .disconnected
         resetAutomaticAttempts()
         updateIntent()
@@ -222,7 +222,8 @@ final class OwnershipController {
         reconfigurationReleaseAttempted = false
         cancelAutomaticAttempts()
 
-        if !operationInProgress, keyboard.state == .connectedLocal || keyboard.isPaired {
+        // A keyboard on a cable is not released; the new selection applies straight away.
+        if !operationInProgress, !keyboard.isConnectedByCable, keyboard.state == .connectedLocal || keyboard.isPaired {
             desiredState = .disconnected
             ownershipReason = .none
             failedDesiredState = nil
@@ -267,7 +268,15 @@ final class OwnershipController {
     }
 
     private func reconcile(force: Bool, immediate: Bool) {
-        guard !operationInProgress, keyboard.bluetoothAvailability == .poweredOn else { return }
+        guard !operationInProgress else { return }
+        // A keyboard on a cable follows the cable, so getkbd neither claims nor releases it.
+        if keyboard.isConnectedByCable {
+            cancelAutomaticAttempts()
+            failedDesiredState = nil
+            lastError = nil
+            return
+        }
+        guard keyboard.bluetoothAvailability == .poweredOn else { return }
 
         if !hasPendingKeyboardConfiguration {
             updateIntent()
@@ -299,7 +308,9 @@ final class OwnershipController {
     }
 
     private func beginOperation(for target: DesiredKeyboardState) {
-        guard !operationInProgress, keyboard.bluetoothAvailability == .poweredOn else { return }
+        guard !operationInProgress,
+              !keyboard.isConnectedByCable,
+              keyboard.bluetoothAvailability == .poweredOn else { return }
 
         if target == .connected, manualTarget == nil {
             let now = DispatchTime.now().uptimeNanoseconds
@@ -338,7 +349,7 @@ final class OwnershipController {
         operationTarget = nil
 
         if hasPendingKeyboardConfiguration {
-            if keyboard.state == .connectedLocal || keyboard.isPaired {
+            if !keyboard.isConnectedByCable, keyboard.state == .connectedLocal || keyboard.isPaired {
                 guard !reconfigurationReleaseAttempted else {
                     failReconfiguration("Unable to release the previous keyboard; the selection was not changed.")
                     return
@@ -353,6 +364,16 @@ final class OwnershipController {
             } else {
                 applyPendingKeyboardConfiguration()
             }
+            return
+        }
+
+        if keyboard.isConnectedByCable {
+            // The cable arrived during the operation; the keyboard is here and stays as it is.
+            failedDesiredState = nil
+            lastError = nil
+            cancelAutomaticAttempts()
+            updateIntent()
+            publish()
             return
         }
 
@@ -539,7 +560,8 @@ final class OwnershipController {
             errorMessage: lastError,
             bluetoothAvailability: keyboard.bluetoothAvailability,
             isRetryingClaim: isRetryingClaim,
-            keyboardPaired: keyboard.isPaired
+            keyboardPaired: keyboard.isPaired,
+            keyboardConnectedByCable: keyboard.isConnectedByCable
         )
         onChange?(snapshot)
     }

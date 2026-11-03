@@ -80,6 +80,12 @@ struct MenuStatus: Equatable {
         desiredState: DesiredKeyboardState?,
         bluetoothActivation: BluetoothActivationState
     ) -> MenuStatus {
+        // On a cable the keyboard works without Bluetooth and moves with the cable, so there is
+        // nothing to claim or release.
+        if snapshot.keyboardConnectedByCable {
+            return MenuStatus(title: "Keyboard connected by cable", action: nil)
+        }
+
         if snapshot.bluetoothAvailability != .poweredOn {
             switch bluetoothActivation {
             case .enabling:

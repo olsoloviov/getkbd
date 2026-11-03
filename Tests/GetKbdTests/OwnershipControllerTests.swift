@@ -55,6 +55,86 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.connectCallCount, 2)
     }
 
+    func testKeyboardOnCableIsNeitherClaimedNorReleased() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.isConnectedByCable = true
+        keyboard.isPairedValue = true
+        keyboard.currentState = .connectedLocal
+        let controller = OwnershipController(keyboard: keyboard)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        controller.usbHubDisconnected()
+        controller.manualRelease()
+        controller.willSleep()
+        controller.didWake(monitorPresent: false, usbHubPresent: false)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 0)
+        XCTAssertEqual(keyboard.disconnectCallCount, 0)
+        XCTAssertTrue(controller.snapshot.keyboardConnectedByCable)
+        XCTAssertNil(controller.snapshot.errorMessage)
+    }
+
+    func testKeyboardOnCableIsNotClaimedWhenThisMacShouldOwnIt() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.isConnectedByCable = true
+        let controller = OwnershipController(keyboard: keyboard)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        controller.manualClaim()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 0)
+    }
+
+    func testCableDuringClaimEndsItWithoutErrorOrRetry() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.blockNextConnect = true
+        let controller = OwnershipController(keyboard: keyboard)
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectIsBlocked()
+
+        keyboard.isConnectedByCable = true
+        keyboard.completeBlockedConnect(success: false)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 1)
+        XCTAssertNil(controller.snapshot.errorMessage)
+        XCTAssertFalse(controller.snapshot.isRetryingClaim)
+    }
+
+    func testCableRemovalResumesAutomaticClaims() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.isConnectedByCable = true
+        let controller = OwnershipController(keyboard: keyboard)
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await controller.waitForIdle()
+        XCTAssertEqual(keyboard.connectCallCount, 0)
+
+        keyboard.isConnectedByCable = false
+        keyboard.refreshState()
+        await keyboard.waitUntilConnectCount(1)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+    }
+
+    func testSelectionChangeOnCableAppliesWithoutRelease() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.isConnectedByCable = true
+        keyboard.isPairedValue = true
+        keyboard.currentState = .connectedLocal
+        let controller = OwnershipController(keyboard: keyboard)
+        controller.start(monitorPresent: true, usbHubPresent: true)
+
+        let other = KeyboardDescriptor(identifier: "other", name: "Other Keyboard")
+        controller.reconfigureKeyboard(to: other)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 0)
+        XCTAssertEqual(keyboard.configuredKeyboard, other)
+    }
+
     func testInactiveStartupDoesNotClaimKeyboard() async {
         let keyboard = FakeKeyboardController()
         let controller = OwnershipController(keyboard: keyboard)
@@ -398,6 +478,9 @@ private final class FakeKeyboardController: KeyboardControlling {
     var bluetoothAvailability: BluetoothAvailability = .poweredOn
     var onBluetoothAvailabilityChange: (() -> Void)?
     var currentState: KeyboardConnectionState = .disconnected
+    var isConnectedByCable = false
+    var isPairedValue: Bool?
+    var isPaired: Bool { isPairedValue ?? (currentState == .connectedLocal) }
     var lastError: String?
     var onStateChange: ((KeyboardConnectionState) -> Void)?
     var connectCallCount = 0

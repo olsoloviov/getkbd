@@ -27,6 +27,23 @@ final class MenuStatusTests: XCTestCase {
                        MenuStatus(title: "Couldn’t turn Bluetooth on", action: .bluetoothSettings))
     }
 
+    func testKeyboardOnCableOffersNoKeyboardActionEvenWithBluetoothOff() {
+        for bluetooth in [BluetoothAvailability.poweredOn, .poweredOff] {
+            let onCable = OwnershipSnapshot(
+                keyboardState: .connectedLocal,
+                ownershipReason: .none,
+                monitorPresent: true,
+                usbHubPresent: true,
+                isBusy: false,
+                errorMessage: nil,
+                bluetoothAvailability: bluetooth,
+                keyboardPaired: true,
+                keyboardConnectedByCable: true
+            )
+            XCTAssertEqual(make(onCable), MenuStatus(title: "Keyboard connected by cable", action: nil))
+        }
+    }
+
     func testSetupNotFinished() {
         let status = MenuStatus.make(settings: .initial, snapshot: snapshot(), desiredState: nil)
 

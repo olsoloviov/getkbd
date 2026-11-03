@@ -40,6 +40,7 @@ struct GetKbdChecks {
         await checkMonitorInputLearner()
         await checkClaimRetries()
         await checkDormantPairingRelease()
+        await checkCableConnection(settings)
         await checkScreenWakeRecovery()
         await checkScreenNotificationRouting()
 
@@ -471,6 +472,58 @@ struct GetKbdChecks {
     }
 
     @MainActor
+    private static func checkCableConnection(_ settings: AppSettings) async {
+        let wired = CheckKeyboardController()
+        wired.onCable = true
+        wired.paired = true
+        wired.state = .connectedLocal
+        let ownership = OwnershipController(keyboard: wired)
+        ownership.start(monitorPresent: true, usbHubPresent: true)
+        ownership.usbHubDisconnected()
+        ownership.manualRelease()
+        ownership.manualClaim()
+        ownership.willSleep()
+        ownership.didWake(monitorPresent: false, usbHubPresent: false)
+        await ownership.waitForIdle()
+        check(wired.claims == 0 && wired.releases == 0 && wired.paired,
+              "a keyboard on a cable is never claimed or released")
+        check(ownership.snapshot.keyboardConnectedByCable, "the snapshot reports the cable")
+        check(MenuStatus.make(settings: settings, snapshot: ownership.snapshot, desiredState: ownership.desiredState)
+              == MenuStatus(title: "Keyboard connected by cable", action: nil),
+              "the menu names the cable and offers no keyboard action")
+
+        let plugged = CheckKeyboardController()
+        plugged.blockNextClaim = true
+        let claiming = OwnershipController(keyboard: plugged)
+        claiming.start(monitorPresent: true, usbHubPresent: true)
+        while plugged.blockedClaim == nil { await Task.yield() }
+        plugged.onCable = true
+        plugged.cancelConnect()
+        await claiming.waitForIdle()
+        check(plugged.claims == 1 && claiming.snapshot.errorMessage == nil && !claiming.snapshot.isRetryingClaim,
+              "a cable plugged in during a claim ends it without an error or a retry")
+
+        plugged.onCable = false
+        plugged.state = .disconnected
+        plugged.refreshState()
+        while plugged.claims < 2 { await Task.yield() }
+        await claiming.waitForIdle()
+        check(plugged.state == .connectedLocal, "unplugging the cable resumes automatic claims")
+
+        let reselect = CheckKeyboardController()
+        reselect.onCable = true
+        reselect.paired = true
+        reselect.state = .connectedLocal
+        let selecting = OwnershipController(keyboard: reselect)
+        selecting.start(monitorPresent: true, usbHubPresent: true)
+        let other = KeyboardDescriptor(identifier: "other", name: "Other")
+        selecting.reconfigureKeyboard(to: other)
+        await selecting.waitForIdle()
+        check(reselect.releases == 0 && reselect.configuredKeyboard == other,
+              "changing the selection does not release a keyboard on a cable")
+    }
+
+    @MainActor
     private static func checkDormantPairingRelease() async {
         let keyboard = CheckKeyboardController()
         keyboard.paired = true
@@ -696,6 +749,8 @@ private final class CheckKeyboardController: KeyboardControlling {
     var releases = 0
     var paired = false
     var isPaired: Bool { paired || state == .connectedLocal }
+    var onCable = false
+    var isConnectedByCable: Bool { onCable }
     var blockNextClaim = false
     var blockedClaim: CheckedContinuation<Bool, Never>?
 

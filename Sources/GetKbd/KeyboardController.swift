@@ -8,6 +8,9 @@ protocol KeyboardControlling: AnyObject {
     var state: KeyboardConnectionState { get }
     /// Whether this Mac holds a pairing for the keyboard, even while it is disconnected.
     var isPaired: Bool { get }
+    /// Whether the keyboard is plugged into this Mac by cable. It then works over USB and its
+    /// Bluetooth pairing must be left alone.
+    var isConnectedByCable: Bool { get }
     var bluetoothAvailability: BluetoothAvailability { get }
     var onBluetoothAvailabilityChange: (() -> Void)? { get set }
     var lastError: String? { get }
@@ -24,6 +27,7 @@ protocol KeyboardControlling: AnyObject {
 
 extension KeyboardControlling {
     var isPaired: Bool { state == .connectedLocal }
+    var isConnectedByCable: Bool { false }
 }
 
 private final class ContinuationGate<Value: Sendable>: @unchecked Sendable {
@@ -94,17 +98,27 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
 
     var configuredKeyboard: KeyboardDescriptor? {
         didSet {
+            if configuredKeyboard?.identifier != oldValue?.identifier {
+                keyboardProductID = nil
+            }
             refreshState()
         }
     }
 
     var state: KeyboardConnectionState { stateValue }
     private(set) var isPaired = false
+    private(set) var isConnectedByCable = false
     private(set) var lastError: String?
+    private let wiredMonitor = WiredKeyboardMonitor()
+    /// The keyboard's product ID, read from its Bluetooth device record. A cable connection is
+    /// recognised by it, so it is kept for when the record is unavailable.
+    private var keyboardProductID: Int?
     var onStateChange: ((KeyboardConnectionState) -> Void)?
 
     init(configuredKeyboard: KeyboardDescriptor?) {
         self.configuredKeyboard = configuredKeyboard
+        wiredMonitor.onChange = { [weak self] in self?.refreshState() }
+        wiredMonitor.start()
         refreshState()
         installObservers()
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -124,6 +138,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func stop() {
+        wiredMonitor.stop()
         powerTimer?.invalidate()
         powerTimer = nil
         observers.forEach(NotificationCenter.default.removeObserver)
@@ -163,6 +178,14 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     private func refreshConnectionState() {
         let device = configuredKeyboard.flatMap { Self.device(identifier: $0.identifier) }
         updatePairing(device?.device.isPaired() ?? false)
+        if let device, let productID = Self.productID(of: device.device) {
+            keyboardProductID = productID
+        }
+        updateCableConnection(keyboardProductID.map(wiredMonitor.isAttached(productID:)) ?? false)
+        if isConnectedByCable {
+            updateState(.connectedLocal)
+            return
+        }
         guard bluetoothAvailability == .poweredOn else {
             updateState(.disconnected)
             return
@@ -176,6 +199,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func connect() async -> Bool {
+        if keyboardIsOnCable() { return true }
         guard requireBluetooth() else { return false }
         guard let box = await resolvedDevice() else {
             fail("No paired keyboard is selected")
@@ -205,6 +229,10 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         }
 
         guard requireBluetooth() else { return false }
+        // The cable may have been plugged in since the claim started. Removing the pairing then
+        // would leave the keyboard unpaired, because it cannot pair over Bluetooth while it is on
+        // the cable.
+        if keyboardIsOnCable() { return true }
         let removeResult = await runBluetoothCall { Self.removePairing(box.device) }
 
         guard let removeResult else {
@@ -327,6 +355,12 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func disconnect() async -> Bool {
+        refreshConnectionState()
+        if isConnectedByCable {
+            fail("The keyboard is connected by cable. Unplug it to release it.")
+            GetKbdLog.error("keyboard.release.failed", lastError ?? "Connected by cable")
+            return false
+        }
         guard requireBluetooth() else { return false }
         guard let box = await resolvedDevice() else {
             fail("No paired keyboard is selected")
@@ -359,6 +393,35 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         updateState(.disconnected)
         GetKbdLog.event("keyboard.release.success")
         return true
+    }
+
+    /// Refreshes the state and reports whether the keyboard is plugged in by cable, in which
+    /// case it is already connected here and its pairing must not be touched.
+    private func keyboardIsOnCable() -> Bool {
+        refreshConnectionState()
+        guard isConnectedByCable else { return false }
+        lastError = nil
+        updateState(.connectedLocal)
+        GetKbdLog.event("keyboard.claim.skipped", "connected by cable")
+        return true
+    }
+
+    private func updateCableConnection(_ connected: Bool) {
+        guard isConnectedByCable != connected else { return }
+        isConnectedByCable = connected
+        if connected { connectCancellation?.cancel() }
+        GetKbdLog.event(connected ? "keyboard.cable.connected" : "keyboard.cable.disconnected", configuredKeyboard?.name ?? "")
+        onStateChange?(stateValue)
+    }
+
+    /// The product ID from the keyboard's Device ID record, which macOS keeps with the pairing.
+    nonisolated private static func productID(of device: IOBluetoothDevice) -> Int? {
+        let deviceIDServiceClass: UInt16 = 0x1200
+        let productIDAttribute: BluetoothSDPServiceAttributeID = 0x0202
+        return device.getServiceRecord(for: IOBluetoothSDPUUID(uuid16: deviceIDServiceClass))?
+            .getAttributeDataElement(productIDAttribute)?
+            .getNumberValue()?
+            .intValue
     }
 
     private func resolvedDevice() async -> BluetoothDeviceBox? {

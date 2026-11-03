@@ -319,6 +319,8 @@ struct OwnershipSnapshot: Equatable, Sendable {
     let isRetryingClaim: Bool
     /// This Mac holds a pairing for the keyboard, connected or not.
     let keyboardPaired: Bool
+    /// The keyboard is plugged into this Mac by cable, so getkbd leaves it alone.
+    let keyboardConnectedByCable: Bool
 
     init(
         keyboardState: KeyboardConnectionState,
@@ -329,8 +331,10 @@ struct OwnershipSnapshot: Equatable, Sendable {
         errorMessage: String?,
         bluetoothAvailability: BluetoothAvailability = .poweredOn,
         isRetryingClaim: Bool = false,
-        keyboardPaired: Bool = false
+        keyboardPaired: Bool = false,
+        keyboardConnectedByCable: Bool = false
     ) {
+        self.keyboardConnectedByCable = keyboardConnectedByCable
         self.bluetoothAvailability = bluetoothAvailability
         self.isRetryingClaim = isRetryingClaim
         self.keyboardPaired = keyboardPaired

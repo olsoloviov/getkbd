@@ -28,6 +28,7 @@ swiftc \
     "$ROOT/Sources/GetKbd/SettingsView.swift" \
     "$ROOT/Sources/GetKbd/SleepMonitor.swift" \
     "$ROOT/Sources/GetKbd/USBHubMonitor.swift" \
+    "$ROOT/Sources/GetKbd/WiredKeyboardMonitor.swift" \
     "$ROOT/Checks/GetKbdChecks/main.swift" \
 -framework AppKit \
 -framework IOBluetooth \
