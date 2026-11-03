@@ -8,4 +8,5 @@
 ## 2. Verification
 
 - [x] 2.1 Add checks: no claim or release on a cable across hub, manual, sleep and wake changes; a claim interrupted by the cable ends without error or retry; unplugging resumes claims; selection changes do not release; the menu line
-- [ ] 2.2 Install on this Mac, plug the keyboard into the dock, and confirm getkbd leaves the pairing and Touch ID in place; unplug and confirm normal hand-over
+- [x] 2.2 Install on this Mac, plug the keyboard into the dock, and confirm getkbd leaves the pairing and Touch ID in place; unplug and confirm normal hand-over (2026-11-03: no claim or release while on the cable; Touch ID registered 8.2-8.3 s after the keyboard appeared over USB, against 14-15 s over Bluetooth)
+- [ ] 2.3 Install on the other Mac and confirm a real switch through the dock
