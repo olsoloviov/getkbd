@@ -99,7 +99,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     var configuredKeyboard: KeyboardDescriptor? {
         didSet {
             if configuredKeyboard?.identifier != oldValue?.identifier {
-                keyboardProductID = nil
+                keyboardProductID = Self.savedProductID(for: configuredKeyboard)
             }
             refreshState()
         }
@@ -111,12 +111,21 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     private(set) var lastError: String?
     private let wiredMonitor = WiredKeyboardMonitor()
     /// The keyboard's product ID, read from its Bluetooth device record. A cable connection is
-    /// recognised by it, so it is kept for when the record is unavailable.
-    private var keyboardProductID: Int?
+    /// recognised by it. The record goes with the pairing, which a release removes, so the ID is
+    /// also saved for when the record is unavailable.
+    private var keyboardProductID: Int? {
+        didSet {
+            guard keyboardProductID != oldValue,
+                  let keyboardProductID,
+                  let key = configuredKeyboard.map(Self.productIDDefaultsKey) else { return }
+            UserDefaults.standard.set(keyboardProductID, forKey: key)
+        }
+    }
     var onStateChange: ((KeyboardConnectionState) -> Void)?
 
     init(configuredKeyboard: KeyboardDescriptor?) {
         self.configuredKeyboard = configuredKeyboard
+        keyboardProductID = Self.savedProductID(for: configuredKeyboard)
         wiredMonitor.onChange = { [weak self] in self?.refreshState() }
         wiredMonitor.start()
         refreshState()
@@ -412,6 +421,15 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         if connected { connectCancellation?.cancel() }
         GetKbdLog.event(connected ? "keyboard.cable.connected" : "keyboard.cable.disconnected", configuredKeyboard?.name ?? "")
         onStateChange?(stateValue)
+    }
+
+    nonisolated private static func productIDDefaultsKey(_ keyboard: KeyboardDescriptor) -> String {
+        "keyboardProductID.\(normalizedBluetoothIdentifier(keyboard.identifier))"
+    }
+
+    private static func savedProductID(for keyboard: KeyboardDescriptor?) -> Int? {
+        guard let keyboard else { return nil }
+        return UserDefaults.standard.object(forKey: productIDDefaultsKey(keyboard)) as? Int
     }
 
     /// The product ID from the keyboard's Device ID record, which macOS keeps with the pairing.

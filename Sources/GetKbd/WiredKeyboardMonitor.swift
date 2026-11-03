@@ -108,8 +108,9 @@ final class WiredKeyboardMonitor {
     }
 
     private static func appleDeviceMatching() -> CFMutableDictionary {
+        // A bare idVendor key matches nothing for IOUSBHostDevice; it has to be a property match.
         let matching = IOServiceMatching("IOUSBHostDevice") as NSMutableDictionary
-        matching["idVendor"] = appleUSBVendorID
+        matching[kIOPropertyMatchKey] = ["idVendor": appleUSBVendorID]
         return matching
     }
 
